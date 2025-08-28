@@ -42,7 +42,7 @@ command_exists() {
 
 # Function to check prerequisites
 check_prerequisites() {
-    echo_info "Checking prerequisites..."
+    echo_info "Checking prerequisites....."
     
     local missing_tools=()
     
