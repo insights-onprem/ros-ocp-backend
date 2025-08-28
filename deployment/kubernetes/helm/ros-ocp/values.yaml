@@ -355,3 +355,6 @@ probes:
   periodSeconds: 10
   timeoutSeconds: 5
   failureThreshold: 3
+
+test:
+  unused: true
