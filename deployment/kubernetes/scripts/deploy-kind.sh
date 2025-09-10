@@ -199,7 +199,7 @@ install_ingress_controller() {
         -p='{"data":{"worker-processes":"2","worker-connections":"1024","max-worker-open-files":"2048"}}'
 
     kubectl patch deployment ingress-nginx-controller -n ingress-nginx --type='json' \
-        -p='[{"op": "replace", "path": "/spec/template/spec/containers/0/resources/requests/memory", "value": "256Mi"},{"op": "add", "path": "/spec/template/spec/containers/0/resources/limits", "value": {"memory": "512Mi", "cpu": "500m"}}]'
+
 
     # Wait a bit for the configuration changes to take effect
     sleep 10
@@ -293,7 +293,7 @@ create_nodeport_services() {
         ]'
     
     echo_success "NodePort services created"
-
+    
     # Create Ingress to route API requests to ros-ocp-ingress service
     kubectl create ingress ros-ocp-ingress-route -n "$NAMESPACE" --class=nginx --rule="/api/ingress/v1*=${HELM_RELEASE_NAME}-ingress:3000"
     echo_success "Ingress routing configured"
