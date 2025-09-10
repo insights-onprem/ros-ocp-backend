@@ -222,10 +222,19 @@ install_ingress_controller() {
     
     # Wait for nginx health endpoint to be accessible
     echo_info "Waiting for nginx health endpoint to be accessible..."
-    if ! curl -f --connect-timeout 3 --max-time 5 --retry 30 --retry-delay 2 --retry-connrefused http://localhost:7080/healthz; then
+    if ! curl -f --connect-timeout 3 --max-time 5 --retry 15 --retry-delay 3 --retry-connrefused http://localhost:7080/healthz; then
         echo_error "nginx health endpoint not accessible after retries"
         echo_info "Debugging nginx accessibility..."
-        kubectl get service ingress-nginx-controller -n ingress-nginx -o yaml
+        echo_info "Checking if port 7080 is listening:"
+        netstat -tlnp | grep :7080 || echo "Port 7080 not found in netstat"
+        echo_info "Testing basic connectivity to port 7080:"
+        curl -v --connect-timeout 3 --max-time 5 http://localhost:7080/ || true
+        echo_info "nginx controller service:"
+        kubectl get service ingress-nginx-controller -n ingress-nginx
+        echo_info "nginx controller pods:"
+        kubectl get pods -n ingress-nginx
+        echo_info "nginx controller logs:"
+        kubectl logs -n ingress-nginx -l app.kubernetes.io/component=controller --tail=20
         exit 1
     fi
     echo_success "nginx health endpoint is accessible"
