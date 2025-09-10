@@ -129,10 +129,10 @@ nodes:
       kubeletExtraArgs:
         node-labels: "ingress-ready=true"
   extraPortMappings:
-  - containerPort: 80
+  - containerPort: 30080
     hostPort: 7080
     protocol: TCP
-  - containerPort: 443
+  - containerPort: 30443
     hostPort: 7443
     protocol: TCP
   - containerPort: 30080
@@ -187,8 +187,22 @@ install_storage_provisioner() {
 install_ingress_controller() {
     echo_info "Installing NGINX Ingress Controller..."
     
-    # Install NGINX Ingress Controller for KIND
-    kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
+    # Install NGINX Ingress Controller for cloud (works better with non-privileged ports)
+    kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.13.2/deploy/static/provider/cloud/deploy.yaml
+
+    # Patch the service to use NodePort with specific ports for KIND port mapping
+    kubectl patch service ingress-nginx-controller -n ingress-nginx --type='json' \
+        -p='[{"op": "replace", "path": "/spec/type", "value": "NodePort"},{"op": "add", "path": "/spec/ports/0/nodePort", "value": 30080},{"op": "add", "path": "/spec/ports/1/nodePort", "value": 30443}]'
+
+    # Configure nginx to use fewer worker processes and increase resource limits for stability
+    kubectl patch configmap ingress-nginx-controller -n ingress-nginx --type='merge' \
+        -p='{"data":{"worker-processes":"2","worker-connections":"1024","max-worker-open-files":"2048"}}'
+
+    kubectl patch deployment ingress-nginx-controller -n ingress-nginx --type='json' \
+        -p='[{"op": "replace", "path": "/spec/template/spec/containers/0/resources/requests/memory", "value": "256Mi"},{"op": "add", "path": "/spec/template/spec/containers/0/resources/limits", "value": {"memory": "512Mi", "cpu": "500m"}}]'
+
+    # Wait a bit for the configuration changes to take effect
+    sleep 10
     
     # Wait for ingress controller to be ready
     echo_info "Waiting for NGINX Ingress Controller to be ready..."
@@ -279,6 +293,10 @@ create_nodeport_services() {
         ]'
     
     echo_success "NodePort services created"
+
+    # Create Ingress to route API requests to ros-ocp-ingress service
+    kubectl create ingress ros-ocp-ingress-route -n "$NAMESPACE" --class=nginx --rule="/api/ingress/v1*=${HELM_RELEASE_NAME}-ingress:3000"
+    echo_success "Ingress routing configured"
 }
 
 # Function to show deployment status
@@ -319,7 +337,7 @@ show_status() {
     echo_info "      - Recommended for production-like testing"
     echo_info ""
     echo_info "  DIRECT SERVICE ENDPOINTS (Development/Debugging Access):"
-    echo_info "    Port 30080: http://localhost:30080/api/ingress/v1/version"
+    echo_info "    Port 7080: http://localhost:7080/api/ingress/v1/version"
     echo_info "      - Ingress Controller API: Monitor ingress controller health and configuration"
     echo_info "      - Use for: Verifying ingress controller is running and responsive"
     echo_info ""
@@ -356,7 +374,7 @@ run_health_checks() {
     local failed_checks=0
     
     # Check if ingress is accessible
-    if curl -f -s http://localhost:30080/api/ingress/v1/version >/dev/null; then
+    if curl -f -s http://localhost:7080/api/ingress/v1/version >/dev/null; then
         echo_success "Ingress API is accessible"
     else
         echo_error "Ingress API is not accessible"
