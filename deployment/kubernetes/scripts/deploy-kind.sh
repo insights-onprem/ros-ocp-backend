@@ -198,8 +198,8 @@ install_ingress_controller() {
         -p='[{"op": "replace", "path": "/spec/type", "value": "NodePort"},{"op": "add", "path": "/spec/ports/0/nodePort", "value": 30080},{"op": "add", "path": "/spec/ports/1/nodePort", "value": 30443}]'
 
     # Configure nginx to use fewer worker processes and increase resource limits for stability
-    kubectl patch configmap ingress-nginx-controller -n ingress-nginx --type='merge' \
-        -p='{"data":{"worker-processes":"2","worker-connections":"1024","max-worker-open-files":"2048"}}'
+    # kubectl patch configmap ingress-nginx-controller -n ingress-nginx --type='merge' \
+    #     -p='{"data":{"worker-processes":"2","worker-connections":"1024","max-worker-open-files":"2048"}}'
 
     kubectl patch deployment ingress-nginx-controller -n ingress-nginx --type='json' \
 
