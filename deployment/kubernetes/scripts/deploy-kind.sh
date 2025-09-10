@@ -196,13 +196,19 @@ install_ingress_controller() {
     # Patch the service to use NodePort with specific ports for KIND port mapping
     kubectl patch service ingress-nginx-controller -n ingress-nginx --type='json' \
         -p='[{"op": "replace", "path": "/spec/type", "value": "NodePort"},{"op": "add", "path": "/spec/ports/0/nodePort", "value": 30080},{"op": "add", "path": "/spec/ports/1/nodePort", "value": 30443}]'
+    
+    # Verify the service patch worked
+    echo_info "Verifying NodePort service configuration..."
+    kubectl get service ingress-nginx-controller -n ingress-nginx -o jsonpath='{.spec.type}' | grep -q "NodePort" || {
+        echo_error "Failed to patch ingress-nginx-controller service to NodePort"
+        kubectl get service ingress-nginx-controller -n ingress-nginx -o yaml
+        exit 1
+    }
+    echo_success "NodePort service configured successfully"
 
     # Configure nginx to use fewer worker processes and increase resource limits for stability
     # kubectl patch configmap ingress-nginx-controller -n ingress-nginx --type='merge' \
     #     -p='{"data":{"worker-processes":"2","worker-connections":"1024","max-worker-open-files":"2048"}}'
-
-    kubectl patch deployment ingress-nginx-controller -n ingress-nginx --type='json' \
-
 
     # Wait a bit for the configuration changes to take effect
     sleep 10
@@ -213,6 +219,16 @@ install_ingress_controller() {
         --for=condition=ready pod \
         --selector=app.kubernetes.io/component=controller \
         --timeout=300s
+    
+    # Wait for nginx health endpoint to be accessible
+    echo_info "Waiting for nginx health endpoint to be accessible..."
+    if ! curl -f --connect-timeout 3 --max-time 5 --retry 30 --retry-delay 2 --retry-connrefused http://localhost:7080/healthz; then
+        echo_error "nginx health endpoint not accessible after retries"
+        echo_info "Debugging nginx accessibility..."
+        kubectl get service ingress-nginx-controller -n ingress-nginx -o yaml
+        exit 1
+    fi
+    echo_success "nginx health endpoint is accessible"
     
     echo_success "NGINX Ingress Controller installed and ready"
 }
