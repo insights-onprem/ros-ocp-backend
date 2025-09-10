@@ -220,6 +220,10 @@ install_ingress_controller() {
         --selector=app.kubernetes.io/component=controller \
         --timeout=300s
     
+    # Give nginx controller time to complete initial sync and start accepting requests
+    echo_info "Waiting for nginx controller to complete initialization..."
+    sleep 15
+    
     # Wait for nginx health endpoint to be accessible
     echo_info "Waiting for nginx health endpoint to be accessible..."
     if ! curl -f --connect-timeout 3 --max-time 5 --retry 15 --retry-delay 3 --retry-connrefused http://localhost:7080/healthz; then
