@@ -381,6 +381,31 @@ run_health_checks() {
         echo_success "Ingress API is accessible"
     else
         echo_error "Ingress API is not accessible"
+        echo_info "Debugging ingress accessibility..."
+        
+        # Check nginx controller health
+        if curl -f -s http://localhost:7080/healthz >/dev/null 2>&1; then
+            echo_info "✓ nginx controller is healthy"
+        else
+            echo_error "✗ nginx controller health check failed"
+        fi
+        
+        # Check nginx controller logs
+        echo_info "nginx controller logs (last 10 lines):"
+        kubectl logs -n ingress-nginx -l app.kubernetes.io/component=controller --tail=10 || echo_error "Failed to get nginx logs"
+        
+        # Check ingress rules
+        echo_info "Ingress rules:"
+        kubectl get ingress -n "$NAMESPACE" ros-ocp-ingress-route -o yaml 2>/dev/null || echo_error "Ingress rule not found"
+        
+        # Test direct service access
+        echo_info "Testing direct service access..."
+        if curl -f -s http://localhost:30088/api/ingress/v1/version >/dev/null 2>&1; then
+            echo_info "✓ Direct service access works (routing issue)"
+        else
+            echo_error "✗ Direct service access also fails (service issue)"
+        fi
+        
         failed_checks=$((failed_checks + 1))
     fi
     
