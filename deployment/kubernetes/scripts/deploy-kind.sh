@@ -141,6 +141,9 @@ nodes:
   - containerPort: 30081
     hostPort: 30081
     protocol: TCP
+  - containerPort: 30088
+    hostPort: 30088
+    protocol: TCP
   - containerPort: 30082
     hostPort: 30082
     protocol: TCP
@@ -273,7 +276,7 @@ create_nodeport_services() {
     
     # Ingress service
     kubectl patch service "${HELM_RELEASE_NAME}-ingress" -n "$NAMESPACE" \
-        -p '{"spec":{"type":"NodePort","ports":[{"port":3000,"nodePort":30080,"targetPort":"http","protocol":"TCP","name":"http"}]}}'
+        -p '{"spec":{"type":"NodePort","ports":[{"port":3000,"nodePort":30088,"targetPort":"http","protocol":"TCP","name":"http"}]}}'
     
     # ROS-OCP API service
     kubectl patch service "${HELM_RELEASE_NAME}-rosocp-api" -n "$NAMESPACE" \
