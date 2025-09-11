@@ -130,19 +130,13 @@ nodes:
         node-labels: "ingress-ready=true"
   extraPortMappings:
   - containerPort: 30080
-    hostPort: 7080
+    hostPort: 30080
     protocol: TCP
   - containerPort: 30443
-    hostPort: 7443
-    protocol: TCP
-  - containerPort: 30080
-    hostPort: 30080
+    hostPort: 30443
     protocol: TCP
   - containerPort: 30081
     hostPort: 30081
-    protocol: TCP
-  - containerPort: 30088
-    hostPort: 30088
     protocol: TCP
   - containerPort: 30082
     hostPort: 30082
@@ -196,19 +190,13 @@ install_ingress_controller() {
     # Patch the service to use NodePort with specific ports for KIND port mapping
     kubectl patch service ingress-nginx-controller -n ingress-nginx --type='json' \
         -p='[{"op": "replace", "path": "/spec/type", "value": "NodePort"},{"op": "add", "path": "/spec/ports/0/nodePort", "value": 30080},{"op": "add", "path": "/spec/ports/1/nodePort", "value": 30443}]'
-    
-    # Verify the service patch worked
-    echo_info "Verifying NodePort service configuration..."
-    kubectl get service ingress-nginx-controller -n ingress-nginx -o jsonpath='{.spec.type}' | grep -q "NodePort" || {
-        echo_error "Failed to patch ingress-nginx-controller service to NodePort"
-        kubectl get service ingress-nginx-controller -n ingress-nginx -o yaml
-        exit 1
-    }
-    echo_success "NodePort service configured successfully"
 
     # Configure nginx to use fewer worker processes and increase resource limits for stability
-    # kubectl patch configmap ingress-nginx-controller -n ingress-nginx --type='merge' \
-    #     -p='{"data":{"worker-processes":"2","worker-connections":"1024","max-worker-open-files":"2048"}}'
+    kubectl patch configmap ingress-nginx-controller -n ingress-nginx --type='merge' \
+        -p='{"data":{"worker-processes":"2","worker-connections":"1024","max-worker-open-files":"2048"}}'
+
+    kubectl patch deployment ingress-nginx-controller -n ingress-nginx --type='json' \
+
 
     # Wait a bit for the configuration changes to take effect
     sleep 10
@@ -219,29 +207,6 @@ install_ingress_controller() {
         --for=condition=ready pod \
         --selector=app.kubernetes.io/component=controller \
         --timeout=300s
-    
-    # Give nginx controller time to complete initial sync and start accepting requests
-    echo_info "Waiting for nginx controller to complete initialization..."
-    sleep 15
-    
-    # Wait for nginx health endpoint to be accessible
-    echo_info "Waiting for nginx health endpoint to be accessible..."
-    if ! curl -f --connect-timeout 3 --max-time 5 --retry 15 --retry-delay 3 --retry-connrefused http://localhost:7080/healthz; then
-        echo_error "nginx health endpoint not accessible after retries"
-        echo_info "Debugging nginx accessibility..."
-        echo_info "Checking if port 7080 is listening:"
-        netstat -tlnp | grep :7080 || echo "Port 7080 not found in netstat"
-        echo_info "Testing basic connectivity to port 7080:"
-        curl -v --connect-timeout 3 --max-time 5 http://localhost:7080/ || true
-        echo_info "nginx controller service:"
-        kubectl get service ingress-nginx-controller -n ingress-nginx
-        echo_info "nginx controller pods:"
-        kubectl get pods -n ingress-nginx
-        echo_info "nginx controller logs:"
-        kubectl logs -n ingress-nginx -l app.kubernetes.io/component=controller --tail=20
-        exit 1
-    fi
-    echo_success "nginx health endpoint is accessible"
     
     echo_success "NGINX Ingress Controller installed and ready"
 }
@@ -305,7 +270,7 @@ create_nodeport_services() {
     
     # Ingress service
     kubectl patch service "${HELM_RELEASE_NAME}-ingress" -n "$NAMESPACE" \
-        -p '{"spec":{"type":"NodePort","ports":[{"port":3000,"nodePort":30088,"targetPort":"http","protocol":"TCP","name":"http"}]}}'
+        -p '{"spec":{"type":"NodePort","ports":[{"port":3000,"nodePort":30080,"targetPort":"http","protocol":"TCP","name":"http"}]}}'
     
     # ROS-OCP API service
     kubectl patch service "${HELM_RELEASE_NAME}-rosocp-api" -n "$NAMESPACE" \
@@ -325,7 +290,7 @@ create_nodeport_services() {
         ]'
     
     echo_success "NodePort services created"
-    
+
     # Create Ingress to route API requests to ros-ocp-ingress service
     kubectl create ingress ros-ocp-ingress-route -n "$NAMESPACE" --class=nginx --rule="/api/ingress/v1*=${HELM_RELEASE_NAME}-ingress:3000"
     echo_success "Ingress routing configured"
@@ -356,7 +321,7 @@ show_status() {
     echo_info "Access Points:"
     echo_info ""
     echo_info "  INGRESS ENDPOINTS (Main Application Access):"
-    echo_info "    Port 7080 (HTTP):  http://localhost:7080"
+    echo_info "    Port 7080 (HTTP):  http://localhost:30080"
     echo_info "      - Primary entry point for all web traffic"
     echo_info "      - Routes requests to appropriate backend services based on URL paths"
     echo_info "      - Non-privileged port (replaces standard port 80 for rootless environments)"
@@ -390,7 +355,9 @@ show_status() {
     echo_info "      - Web UI: minioaccesskey/miniosecretkey"
     echo_info "      - Use for: Visual file management, bucket operations, and storage monitoring"
     echo ""
-    
+    echo_info "  - Database (ROS): localhost:15432 (postgres/postgres)"
+    echo ""
+
     echo_info "Useful Commands:"
     echo_info "  - View logs: kubectl logs -n $NAMESPACE -l app.kubernetes.io/instance=$HELM_RELEASE_NAME"
     echo_info "  - Port forward ingress: kubectl port-forward -n $NAMESPACE svc/${HELM_RELEASE_NAME}-ingress 3000:3000"
@@ -406,35 +373,10 @@ run_health_checks() {
     local failed_checks=0
     
     # Check if ingress is accessible
-    if curl -f -s http://localhost:7080/api/ingress/v1/version >/dev/null; then
+    if curl -f -s http://localhost:30080/api/ingress/v1/version >/dev/null; then
         echo_success "Ingress API is accessible"
     else
         echo_error "Ingress API is not accessible"
-        echo_info "Debugging ingress accessibility..."
-        
-        # Check nginx controller health
-        if curl -f -s http://localhost:7080/healthz >/dev/null 2>&1; then
-            echo_info "✓ nginx controller is healthy"
-        else
-            echo_error "✗ nginx controller health check failed"
-        fi
-        
-        # Check nginx controller logs
-        echo_info "nginx controller logs (last 10 lines):"
-        kubectl logs -n ingress-nginx -l app.kubernetes.io/component=controller --tail=10 || echo_error "Failed to get nginx logs"
-        
-        # Check ingress rules
-        echo_info "Ingress rules:"
-        kubectl get ingress -n "$NAMESPACE" ros-ocp-ingress-route -o yaml 2>/dev/null || echo_error "Ingress rule not found"
-        
-        # Test direct service access
-        echo_info "Testing direct service access..."
-        if curl -f -s http://localhost:30088/api/ingress/v1/version >/dev/null 2>&1; then
-            echo_info "✓ Direct service access works (routing issue)"
-        else
-            echo_error "✗ Direct service access also fails (service issue)"
-        fi
-        
         failed_checks=$((failed_checks + 1))
     fi
     
