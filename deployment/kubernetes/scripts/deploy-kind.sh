@@ -43,29 +43,29 @@ command_exists() {
 # Function to check prerequisites
 check_prerequisites() {
     echo_info "Checking prerequisites..."
-    
+
     local missing_tools=()
-    
+
     if ! command_exists kind; then
         missing_tools+=("kind")
     fi
-    
+
     if ! command_exists kubectl; then
         missing_tools+=("kubectl")
     fi
-    
+
     if ! command_exists helm; then
         missing_tools+=("helm")
     fi
-    
+
     if ! command_exists podman; then
         missing_tools+=("podman")
     fi
-    
+
     if [ ${#missing_tools[@]} -gt 0 ]; then
         echo_error "Missing required tools: ${missing_tools[*]}"
         echo_info "Please install the missing tools:"
-        
+
         for tool in "${missing_tools[@]}"; do
             case $tool in
                 "kind")
@@ -94,10 +94,10 @@ check_prerequisites() {
                     ;;
             esac
         done
-        
+
         return 1
     fi
-    
+
     echo_success "All prerequisites are installed"
     return 0
 }
@@ -105,7 +105,7 @@ check_prerequisites() {
 # Function to create KIND cluster with storage
 create_kind_cluster() {
     echo_info "Creating KIND cluster: $KIND_CLUSTER_NAME"
-    
+
     # Check if cluster already exists
     if kind get clusters | grep -q "^${KIND_CLUSTER_NAME}$"; then
         echo_error "KIND cluster '$KIND_CLUSTER_NAME' already exists"
@@ -114,7 +114,7 @@ create_kind_cluster() {
         echo_info "Or use a different cluster name by setting KIND_CLUSTER_NAME environment variable"
         exit 1
     fi
-    
+
     # Create KIND cluster configuration
     local kind_config=$(cat <<EOF
 kind: Cluster
@@ -157,16 +157,16 @@ nodes:
 - role: worker
 EOF
 )
-    
+
     echo "$kind_config" | kind create cluster --config=-
-    
+
     if [ $? -eq 0 ]; then
         echo_success "KIND cluster '$KIND_CLUSTER_NAME' created successfully"
     else
         echo_error "Failed to create KIND cluster"
         return 1
     fi
-    
+
     # Set kubectl context
     kubectl cluster-info --context "kind-${KIND_CLUSTER_NAME}"
     echo_success "kubectl context set to kind-${KIND_CLUSTER_NAME}"
@@ -175,35 +175,35 @@ EOF
 # Function to install storage provisioner
 install_storage_provisioner() {
     echo_info "Installing storage provisioner..."
-    
+
     # KIND comes with Rancher Local Path Provisioner by default
     # We just need to make it the default storage class
     kubectl patch storageclass standard -p '{"metadata": {"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'
-    
+
     echo_success "Storage provisioner configured"
 }
 
 # Function to install NGINX Ingress Controller
 install_ingress_controller() {
     echo_info "Installing NGINX Ingress Controller..."
-    
+
     # Install NGINX Ingress Controller for KIND
     kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
-    
+
     # Wait for ingress controller to be ready
     echo_info "Waiting for NGINX Ingress Controller to be ready..."
     kubectl wait --namespace ingress-nginx \
         --for=condition=ready pod \
         --selector=app.kubernetes.io/component=controller \
         --timeout=300s
-    
+
     echo_success "NGINX Ingress Controller installed and ready"
 }
 
 # Function to create namespace
 create_namespace() {
     echo_info "Creating namespace: $NAMESPACE"
-    
+
     if kubectl get namespace "$NAMESPACE" >/dev/null 2>&1; then
         echo_warning "Namespace '$NAMESPACE' already exists"
     else
@@ -212,18 +212,133 @@ create_namespace() {
     fi
 }
 
+# Function to create authentication setup for insights-ros-ingress
+create_auth_setup() {
+    echo_info "Setting up authentication for insights-ros-ingress..."
+
+    # Create service account for insights-ros-ingress
+    local service_account="insights-ros-ingress"
+    
+    if kubectl get serviceaccount "$service_account" -n "$NAMESPACE" >/dev/null 2>&1; then
+        echo_warning "Service account '$service_account' already exists in namespace '$NAMESPACE'"
+    else
+        kubectl create serviceaccount "$service_account" -n "$NAMESPACE"
+        echo_success "Service account '$service_account' created"
+    fi
+
+    # Create ClusterRoleBinding for system:auth-delegator (required for TokenReviewer API)
+    local cluster_role_binding="${service_account}-token-reviewer"
+    
+    if kubectl get clusterrolebinding "$cluster_role_binding" >/dev/null 2>&1; then
+        echo_warning "ClusterRoleBinding '$cluster_role_binding' already exists"
+    else
+        cat <<EOF | kubectl apply -f -
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: $cluster_role_binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:auth-delegator
+subjects:
+- kind: ServiceAccount
+  name: $service_account
+  namespace: $NAMESPACE
+EOF
+        echo_success "ClusterRoleBinding '$cluster_role_binding' created"
+    fi
+
+    # Create a long-lived token secret for the service account
+    local token_secret="${service_account}-token"
+    
+    if kubectl get secret "$token_secret" -n "$NAMESPACE" >/dev/null 2>&1; then
+        echo_warning "Token secret '$token_secret' already exists"
+    else
+        cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Secret
+metadata:
+  name: $token_secret
+  namespace: $NAMESPACE
+  annotations:
+    kubernetes.io/service-account.name: $service_account
+type: kubernetes.io/service-account-token
+EOF
+        echo_success "Token secret '$token_secret' created"
+    fi
+
+    # Wait for the token to be generated
+    echo_info "Waiting for service account token to be generated..."
+    local retries=30
+    local count=0
+    
+    while [ $count -lt $retries ]; do
+        if kubectl get secret "$token_secret" -n "$NAMESPACE" -o jsonpath='{.data.token}' >/dev/null 2>&1; then
+            local token_data
+            token_data=$(kubectl get secret "$token_secret" -n "$NAMESPACE" -o jsonpath='{.data.token}')
+            if [ -n "$token_data" ]; then
+                echo_success "Service account token generated successfully"
+                break
+            fi
+        fi
+        echo_info "Waiting for token generation... ($((count + 1))/$retries)"
+        sleep 2
+        count=$((count + 1))
+    done
+
+    if [ $count -eq $retries ]; then
+        echo_error "Failed to generate service account token after $retries attempts"
+        return 1
+    fi
+
+    # Save authentication configuration for test scripts
+    local kubeconfig_path="/tmp/dev-kubeconfig"
+    local cluster_server
+    cluster_server=$(kubectl config view --raw -o jsonpath="{.clusters[?(@.name=='kind-${KIND_CLUSTER_NAME}')].cluster.server}")
+    local token
+    token=$(kubectl get secret "$token_secret" -n "$NAMESPACE" -o jsonpath='{.data.token}' | base64 -d)
+
+    # Create kubeconfig file for test scripts
+    cat > "$kubeconfig_path" <<EOF
+apiVersion: v1
+kind: Config
+clusters:
+- cluster:
+    server: $cluster_server
+    insecure-skip-tls-verify: true
+  name: kind-dev
+contexts:
+- context:
+    cluster: kind-dev
+    user: $service_account
+    namespace: $NAMESPACE
+  name: kind-dev
+current-context: kind-dev
+users:
+- name: $service_account
+  user:
+    token: $token
+EOF
+
+    echo_success "Test kubeconfig created at $kubeconfig_path"
+    echo_info "This kubeconfig can be used by test scripts for authentication"
+    
+    return 0
+}
+
 # Function to deploy Helm chart
 deploy_helm_chart() {
     echo_info "Deploying ROS-OCP Helm chart..."
-    
+
     cd "$SCRIPT_DIR"
-    
+
     # Check if Helm chart directory exists
     if [ ! -d "../helm/ros-ocp" ]; then
         echo_error "Helm chart directory not found: ../helm/ros-ocp"
         return 1
     fi
-    
+
     # Install or upgrade the Helm release
     helm upgrade --install "$HELM_RELEASE_NAME" ../helm/ros-ocp \
         --namespace "$NAMESPACE" \
@@ -231,7 +346,7 @@ deploy_helm_chart() {
         --set global.storageClass="$STORAGE_CLASS" \
         --timeout=600s \
         --wait
-    
+
     if [ $? -eq 0 ]; then
         echo_success "Helm chart deployed successfully"
     else
@@ -243,32 +358,32 @@ deploy_helm_chart() {
 # Function to wait for pods to be ready
 wait_for_pods() {
     echo_info "Waiting for pods to be ready..."
-    
+
     # Wait for all pods to be ready (excluding jobs)
     kubectl wait --for=condition=ready pod -l "app.kubernetes.io/instance=$HELM_RELEASE_NAME" \
         --namespace "$NAMESPACE" \
         --timeout=600s \
         --field-selector=status.phase!=Succeeded
-    
+
     echo_success "All pods are ready"
 }
 
 # Function to create NodePort services for external access
 create_nodeport_services() {
     echo_info "Creating NodePort services for external access..."
-    
+
     # Ingress service
     kubectl patch service "${HELM_RELEASE_NAME}-ingress" -n "$NAMESPACE" \
-        -p '{"spec":{"type":"NodePort","ports":[{"port":3000,"nodePort":30080,"targetPort":"http","protocol":"TCP","name":"http"}]}}'
-    
+        -p '{"spec":{"type":"NodePort","ports":[{"port":8080,"nodePort":30080,"targetPort":"http","protocol":"TCP","name":"http"}]}}'
+
     # ROS-OCP API service
     kubectl patch service "${HELM_RELEASE_NAME}-rosocp-api" -n "$NAMESPACE" \
         -p '{"spec":{"type":"NodePort","ports":[{"port":8000,"nodePort":30081,"targetPort":"http","protocol":"TCP","name":"http"},{"port":9000,"nodePort":30082,"targetPort":"metrics","protocol":"TCP","name":"metrics"}]}}'
-    
+
     # Kruize service
     kubectl patch service "${HELM_RELEASE_NAME}-kruize" -n "$NAMESPACE" \
         -p '{"spec":{"type":"NodePort","ports":[{"port":8080,"nodePort":30090,"targetPort":"http","protocol":"TCP","name":"http"}]}}'
-    
+
     # MinIO service (API and Console)
     kubectl patch service "${HELM_RELEASE_NAME}-minio" -n "$NAMESPACE" \
         --type='json' \
@@ -277,7 +392,7 @@ create_nodeport_services() {
           {"op": "add", "path": "/spec/ports/0/nodePort", "value": 30091},
           {"op": "add", "path": "/spec/ports/1/nodePort", "value": 30099}
         ]'
-    
+
     echo_success "NodePort services created"
 }
 
@@ -285,36 +400,43 @@ create_nodeport_services() {
 show_status() {
     echo_info "Deployment Status"
     echo_info "=================="
-    
+
     echo_info "Cluster: kind-${KIND_CLUSTER_NAME}"
     echo_info "Namespace: $NAMESPACE"
     echo_info "Helm Release: $HELM_RELEASE_NAME"
     echo ""
-    
+
     echo_info "Pods:"
     kubectl get pods -n "$NAMESPACE" -o wide
     echo ""
-    
+
     echo_info "Services:"
     kubectl get services -n "$NAMESPACE"
     echo ""
-    
+
     echo_info "Storage:"
     kubectl get pvc -n "$NAMESPACE"
     echo ""
-    
+
     echo_info "Access Points:"
-    echo_info "  - Ingress API: http://localhost:30080/api/ingress/v1/version"
+    echo_info "  - Ingress API: http://localhost:30080/health"
     echo_info "  - ROS-OCP API: http://localhost:30081/status"
     echo_info "  - Kruize API: http://localhost:30090/listPerformanceProfiles"
     echo_info "  - MinIO API: http://localhost:30091 (S3 API)"
     echo_info "  - MinIO Console: http://localhost:30099 (Web UI - minioaccesskey/miniosecretkey)"
     echo ""
-    
+
+    echo_info "Authentication:"
+    echo_info "  - Service account: insights-ros-ingress (in namespace $NAMESPACE)"
+    echo_info "  - Test kubeconfig: /tmp/dev-kubeconfig"
+    echo_info "  - Token secret: insights-ros-ingress-token"
+    echo ""
+
     echo_info "Useful Commands:"
     echo_info "  - View logs: kubectl logs -n $NAMESPACE -l app.kubernetes.io/instance=$HELM_RELEASE_NAME"
     echo_info "  - Port forward ingress: kubectl port-forward -n $NAMESPACE svc/${HELM_RELEASE_NAME}-ingress 3000:3000"
     echo_info "  - Port forward API: kubectl port-forward -n $NAMESPACE svc/${HELM_RELEASE_NAME}-rosocp-api 8001:8000"
+    echo_info "  - Run tests: ./test-k8s-dataflow.sh"
     echo_info "  - Delete deployment: helm uninstall $HELM_RELEASE_NAME -n $NAMESPACE"
     echo_info "  - Delete cluster: kind delete cluster --name $KIND_CLUSTER_NAME"
 }
@@ -322,17 +444,17 @@ show_status() {
 # Function to run health checks
 run_health_checks() {
     echo_info "Running health checks..."
-    
+
     local failed_checks=0
-    
+
     # Check if ingress is accessible
-    if curl -f -s http://localhost:30080/api/ingress/v1/version >/dev/null; then
+    if curl -f -s http://localhost:30080/health >/dev/null; then
         echo_success "Ingress API is accessible"
     else
         echo_error "Ingress API is not accessible"
         failed_checks=$((failed_checks + 1))
     fi
-    
+
     # Check if ROS-OCP API is accessible
     if curl -f -s http://localhost:30081/status >/dev/null; then
         echo_success "ROS-OCP API is accessible"
@@ -340,7 +462,7 @@ run_health_checks() {
         echo_error "ROS-OCP API is not accessible"
         failed_checks=$((failed_checks + 1))
     fi
-    
+
     # Check if Kruize is accessible
     if curl -f -s http://localhost:30090/listPerformanceProfiles >/dev/null; then
         echo_success "Kruize API is accessible"
@@ -356,20 +478,20 @@ run_health_checks() {
         echo_error "MinIO console is not accessible"
         failed_checks=$((failed_checks + 1))
     fi
-    
+
     if [ $failed_checks -eq 0 ]; then
         echo_success "All health checks passed!"
     else
         echo_warning "$failed_checks health check(s) failed"
     fi
-    
+
     return $failed_checks
 }
 
 # Function to cleanup
 cleanup() {
     echo_info "Cleaning up..."
-    
+
     if [ "${1:-}" = "--all" ]; then
         echo_info "Deleting KIND cluster..."
         kind delete cluster --name "$KIND_CLUSTER_NAME"
@@ -388,62 +510,67 @@ cleanup() {
 main() {
     echo_info "ROS-OCP Kubernetes Deployment for KIND"
     echo_info "======================================="
-    
+
     # Check prerequisites
     if ! check_prerequisites; then
         exit 1
     fi
-    
+
     echo_info "Configuration:"
     echo_info "  KIND Cluster: $KIND_CLUSTER_NAME"
     echo_info "  Helm Release: $HELM_RELEASE_NAME"
     echo_info "  Namespace: $NAMESPACE"
     echo_info "  Storage Class: $STORAGE_CLASS"
     echo ""
-    
+
     # Create KIND cluster
     if ! create_kind_cluster; then
         exit 1
     fi
-    
+
     # Install storage provisioner
     if ! install_storage_provisioner; then
         exit 1
     fi
-    
+
     # Install ingress controller
     if ! install_ingress_controller; then
         exit 1
     fi
-    
+
     # Create namespace
     if ! create_namespace; then
         exit 1
     fi
-    
+
+    # Create authentication setup
+    if ! create_auth_setup; then
+        echo_warning "Failed to create authentication setup. Authentication may not work properly."
+    fi
+
     # Deploy Helm chart
     if ! deploy_helm_chart; then
         exit 1
     fi
-    
+
     # Wait for pods to be ready
     if ! wait_for_pods; then
         echo_warning "Some pods may not be ready. Continuing..."
     fi
-    
+
     # Create NodePort services
     if ! create_nodeport_services; then
         echo_warning "Failed to create NodePort services. You may need to use port-forwarding."
     fi
-    
+
     # Show deployment status
     show_status
-    
+
     # Run health checks
     echo_info "Waiting 30 seconds for services to stabilize before running health checks..."
     sleep 30
     run_health_checks
-    
+
     echo ""
     echo_success "ROS-OCP deployment completed!"
     echo_info "The services are now running in KIND cluster '$KIND_CLUSTER_NAME'"
