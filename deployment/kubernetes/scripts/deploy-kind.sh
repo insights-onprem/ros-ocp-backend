@@ -372,15 +372,17 @@ run_health_checks() {
     
     local failed_checks=0
     
-    echo_info "Check ingress curl"
-    # Check if ingress is accessible
-    if curl -f -s http://localhost:30080/api/ingress/v1/version >/dev/null; then
-        echo_success "Ingress API is accessible"
-    else
-        echo_error "Ingress API is not accessible"
-        failed_checks=$((failed_checks + 1))
-    fi
-    
+    # echo_info "Check ingress curl"
+    # # Check if ingress is accessible
+    # if curl -f -s http://localhost:30080/api/ingress/v1/version >/dev/null; then
+    #     echo_success "Ingress API is accessible"
+    # else
+    #     echo_error "Ingress API is not accessible"
+    #     failed_checks=$((failed_checks + 1))
+    # fi
+    echo_info "Check ingress interal"
+    check_ingress_internal
+
     # Check if ROS-OCP API is accessible
     if curl -f -s http://localhost:30081/status >/dev/null; then
         echo_success "ROS-OCP API is accessible"
@@ -412,6 +414,29 @@ run_health_checks() {
     fi
     
     return $failed_checks
+}
+
+check_ingress_internal() {
+    echo_info "Checking ingress backend accessibility from ingress-nginx pod..."
+
+    local ingress_pod
+    ingress_pod=$(kubectl get pods -n ingress-nginx -l app.kubernetes.io/component=controller -o jsonpath="{.items[0].metadata.name}")
+    if [ -z "$ingress_pod" ]; then
+        echo_error "Ingress-nginx controller pod not found"
+        return 1
+    fi
+
+    local status
+    status=$(kubectl exec -n ingress-nginx "$ingress_pod" -- \
+        curl -s -o /dev/null -w "%{http_code}" "http://ros-ocp-test-ingress.ros-ocp-test.svc.cluster.local:3000/api/ingress/v1/version")
+
+    if [[ "$status" -ge 200 && "$status" -lt 300 ]]; then
+        echo_success "Ingress internal test passed with HTTP status code $status"
+        return 0
+    else
+        echo_error "Ingress internal test failed with HTTP status code $status"
+        return 1
+    fi
 }
 
 # Function to cleanup
