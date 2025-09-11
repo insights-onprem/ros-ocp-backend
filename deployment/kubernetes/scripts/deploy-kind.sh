@@ -372,6 +372,8 @@ run_health_checks() {
     
     local failed_checks=0
     
+    echo_info "Check ingress curl"
+    curl http://localhost:30080/api/ingress/v1/version 
     # Check if ingress is accessible
     if curl -f -s http://localhost:30080/api/ingress/v1/version >/dev/null; then
         echo_success "Ingress API is accessible"
@@ -431,6 +433,34 @@ cleanup() {
     fi
 }
 
+debug_ingress() {
+    echo_info "=== Debugging Kubernetes ingress and services ==="
+
+    echo_info "Get all ingress resources:"
+    kubectl get ingress --all-namespaces
+
+    echo_info "Describe ros-ocp-ingress-route ingress:"
+    kubectl describe ingress ros-ocp-ingress-route -n "$NAMESPACE"
+
+    echo_info "Get all services in all namespaces:"
+    kubectl get svc --all-namespaces
+
+    echo_info "Describe ingress-nginx-controller service:"
+    kubectl describe svc ingress-nginx-controller -n ingress-nginx
+
+    echo_info "Get ingress-nginx controller pods and their statuses:"
+    kubectl get pods -n ingress-nginx -o wide
+
+    echo_info "Show logs from ingress-nginx controller pods (last 50 lines):"
+    kubectl logs -n ingress-nginx -l app.kubernetes.io/component=controller --tail=50
+
+    echo_info "Show cluster info:"
+    kubectl cluster-info
+
+    echo_info "Show current kubectl context:"
+    kubectl config current-context
+}
+
 # Main execution
 main() {
     echo_info "ROS-OCP Kubernetes Deployment for KIND"
@@ -485,10 +515,12 @@ main() {
     
     # Show deployment status
     show_status
-    
+
     # Run health checks
     echo_info "Waiting 30 seconds for services to stabilize before running health checks..."
     sleep 30
+    # Debug
+    debug_ingress
     run_health_checks
     
     echo ""
