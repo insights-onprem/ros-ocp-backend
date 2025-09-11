@@ -488,11 +488,25 @@ debug_ingress() {
 debug_ingress_curl() {
     echo_info "=== Debugging service accessibility from inside cluster ==="
 
+    echo_info "port forwording"
+    kubectl port-forward -n ingress-nginx service/ingress-nginx-controller 30080:80 &
+    PORT_FWD_PID=$!
+
+    sleep 5
+
+    curl -f http://localhost:30080/api/ingress/v1/version
+
+    kill $PORT_FWD_PID
+    echo_info "end port forwarding"
+    
     local ingress_pod
-    ingress_pod=$(kubectl get pods -n ros-ocp-test -l app=ros-ocp-test-ingress -o jsonpath="{.items[0].metadata.name}")
+    kubectl wait --namespace ingress-nginx --for=condition=ready pod -l app.kubernetes.io/component=controller --timeout=60s
+    # Then get pod name safely
+    ingress_pod=$(kubectl get pods -n ingress-nginx -l app.kubernetes.io/component=controller -o jsonpath="{.items[0].metadata.name}")
+
     if [ -z "$ingress_pod" ]; then
-        echo_error "Ingress backend pod not found"
-        return 1
+    echo_error "Ingress-nginx controller pod not found"
+    exit 1
     fi
 
     echo_info "Curl ingress backend pod directly:"
