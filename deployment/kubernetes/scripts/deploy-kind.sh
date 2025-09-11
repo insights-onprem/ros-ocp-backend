@@ -129,10 +129,10 @@ nodes:
       kubeletExtraArgs:
         node-labels: "ingress-ready=true"
   extraPortMappings:
-  - containerPort: 30080
+  - containerPort: 80
     hostPort: 30080
     protocol: TCP
-  - containerPort: 30443
+  - containerPort: 443
     hostPort: 30443
     protocol: TCP
   - containerPort: 30081
@@ -498,7 +498,7 @@ debug_ingress_curl() {
 
     kill $PORT_FWD_PID
     echo_info "end port forwarding"
-    
+
     local ingress_pod
     kubectl wait --namespace ingress-nginx --for=condition=ready pod -l app.kubernetes.io/component=controller --timeout=60s
     # Then get pod name safely
