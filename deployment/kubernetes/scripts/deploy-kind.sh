@@ -373,7 +373,6 @@ run_health_checks() {
     local failed_checks=0
     
     echo_info "Check ingress curl"
-    curl http://localhost:30080/api/ingress/v1/version 
     # Check if ingress is accessible
     if curl -f -s http://localhost:30080/api/ingress/v1/version >/dev/null; then
         echo_success "Ingress API is accessible"
@@ -461,6 +460,32 @@ debug_ingress() {
     kubectl config current-context
 }
 
+debug_ingress_curl() {
+    echo_info "=== Debugging service accessibility from inside cluster ==="
+
+    local ingress_pod
+    ingress_pod=$(kubectl get pods -n ros-ocp-test -l app=ros-ocp-test-ingress -o jsonpath="{.items[0].metadata.name}")
+    if [ -z "$ingress_pod" ]; then
+        echo_error "Ingress backend pod not found"
+        return 1
+    fi
+
+    echo_info "Curl ingress backend pod directly:"
+    kubectl exec -n ros-ocp-test "$ingress_pod" -- curl -f -s -o /dev/null -w "%{http_code}" http://localhost:3000/api/ingress/v1/version \
+        && echo_success "Ingress backend pod HTTP check passed" || echo_error "Ingress backend pod HTTP check failed"
+
+    local ingress_nginx_pod
+    ingress_nginx_pod=$(kubectl get pods -n ingress-nginx -l app.kubernetes.io/component=controller -o jsonpath="{.items[0].metadata.name}")
+    if [ -z "$ingress_nginx_pod" ]; then
+        echo_error "Ingress-nginx controller pod not found"
+        return 1
+    fi
+
+    echo_info "Curl backend service from ingress controller pod:"
+    kubectl exec -n ingress-nginx "$ingress_nginx_pod" -- curl -f -s -o /dev/null -w "%{http_code}" http://ros-ocp-test-ingress.ros-ocp-test.svc.cluster.local:3000/api/ingress/v1/version \
+        && echo_success "Ingress controller pod HTTP check passed" || echo_error "Ingress controller pod HTTP check failed"
+}
+
 # Main execution
 main() {
     echo_info "ROS-OCP Kubernetes Deployment for KIND"
@@ -521,6 +546,7 @@ main() {
     sleep 30
     # Debug
     debug_ingress
+    debug_ingress_curl
     run_health_checks
     
     echo ""
