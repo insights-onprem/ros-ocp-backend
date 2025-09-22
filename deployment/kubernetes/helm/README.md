@@ -44,7 +44,6 @@ ros-ocp/
 - **ROS-OCP Housekeeper**: Maintenance tasks
 - **Kruize Autotune**: Optimization recommendation engine
 - **Sources API**: Source management
-- **Redis**: Caching layer
 - **Nginx**: Web server
 
 ## Configuration

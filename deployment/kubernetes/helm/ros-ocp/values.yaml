@@ -84,15 +84,6 @@ kafka:
       size: 10Gi
     port: 29092
 
-# Redis
-redis:
-  image:
-    repository: quay.io/insights-onprem/redis-ephemeral
-    tag: "6"
-  maxMemory: 512mb
-  maxMemoryPolicy: allkeys-lru
-  port: 6379
-
 # MinIO
 minio:
   image:
@@ -127,7 +118,7 @@ ingress:
 # Sources API
 sourcesApi:
   image:
-    repository: quay.io/insights-onprem/sources-api-go
+    repository:  quay.io/insights-onprem/sources-api-go
     tag: "latest"
   port: 8000
   logLevel: DEBUG
