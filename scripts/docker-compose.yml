@@ -112,10 +112,6 @@ services:
     ports:
       - "15434:5432"
 
-  redis:
-    image: quay.io/cloudservices/redis-ephemeral:6
-    ports:
-      - "6379:6379"
 
   sources-db-setup:
     image: quay.io/cloudservices/sources-api-go
@@ -128,8 +124,6 @@ services:
       - DATABASE_PORT=5432
       - DATABASE_NAME=sources_api_development
       - LOG_LEVEL=DEBUG
-      - REDIS_CACHE_HOST=redis
-      - REDIS_CACHE_PORT=6379
       - BYPASS_RBAC=true
       - QUEUE_HOST=kafka
       - QUEUE_PORT=29092
@@ -149,12 +143,9 @@ services:
       - DATABASE_PORT=5432
       - DATABASE_NAME=sources_api_development
       - LOG_LEVEL=DEBUG
-      - REDIS_CACHE_HOST=redis
-      - REDIS_CACHE_PORT=6379
       - BYPASS_RBAC=true
       - QUEUE_HOST=kafka
       - QUEUE_PORT=29092
     depends_on:
       - db-sources
       - kafka
-      - redis

@@ -23,19 +23,6 @@ services:
   nginx:
     image: quay.io/insights-onprem/nginx:1.28.0-alpine
 
-  # Override Redis to use insights-onprem image
-  redis:
-    image: quay.io/insights-onprem/redis-ephemeral:6
-    environment:
-      - REDIS_MAXMEMORY=512mb
-      - REDIS_MAXMEMORY_POLICY=allkeys-lru
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 30s
-      timeout: 3s
-      retries: 3
-      start_period: 5s
-
   minio:
     container_name: minio_1
     image: quay.io/minio/minio:RELEASE.2025-07-23T15-54-02Z
@@ -90,7 +77,7 @@ services:
 
   # Override Sources API Go to use insights-onprem image
   sources-api-go:
-    image: quay.io/insights-onprem/sources-api-go:latest
+    image:  quay.io/insights-onprem/sources-api-go:latest
     environment:
       - DATABASE_USER=postgres
       - DATABASE_PASSWORD=postgres
@@ -98,8 +85,6 @@ services:
       - DATABASE_PORT=5432
       - DATABASE_NAME=sources_api_development
       - LOG_LEVEL=DEBUG
-      - REDIS_CACHE_HOST=redis
-      - REDIS_CACHE_PORT=6379
       - BYPASS_RBAC=true
       - QUEUE_HOST=kafka
       - QUEUE_PORT=29092
@@ -152,7 +137,7 @@ services:
   # Override Sources DB Setup to use insights-onprem image
   # Disabled since database is already initialized
   sources-db-setup:
-    image: quay.io/insights-onprem/sources-api-go:latest
+    image:  quay.io/insights-onprem/sources-api-go:latest
     restart: "no"
     command: "echo 'Database already initialized, skipping setup'"
     environment:
@@ -162,8 +147,6 @@ services:
       - DATABASE_PORT=5432
       - DATABASE_NAME=sources_api_development
       - LOG_LEVEL=DEBUG
-      - REDIS_CACHE_HOST=redis
-      - REDIS_CACHE_PORT=6379
       - BYPASS_RBAC=true
       - QUEUE_HOST=kafka
       - QUEUE_PORT=29092

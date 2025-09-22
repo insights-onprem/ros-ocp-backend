@@ -30,7 +30,6 @@ The compose setup includes:
 ### Core Infrastructure
 - **PostgreSQL** (3 instances): ROS, Kruize, and Sources databases
 - **Kafka + Zookeeper**: Message streaming
-- **Redis**: Caching
 - **MinIO**: Object storage
 
 ### Application Services
