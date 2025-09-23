@@ -88,10 +88,6 @@ jobs:
         # Wait for MinIO
         echo "Waiting for MinIO..."
         timeout 180 bash -c 'until curl -f http://localhost:9000/minio/health/live &>/dev/null; do sleep 5; done'
-        
-        # Wait for Redis
-        echo "Waiting for Redis..."
-        timeout 180 bash -c 'until podman exec redis_1 redis-cli ping &>/dev/null; do sleep 5; done'
 
     - name: Wait for application services
       working-directory: deployment/docker-compose
@@ -178,7 +174,6 @@ jobs:
         echo "- PostgreSQL databases (ROS, Kruize, Sources)" >> $GITHUB_STEP_SUMMARY
         echo "- Kafka message broker" >> $GITHUB_STEP_SUMMARY
         echo "- MinIO object storage" >> $GITHUB_STEP_SUMMARY
-        echo "- Redis cache" >> $GITHUB_STEP_SUMMARY
         echo "- Ingress service" >> $GITHUB_STEP_SUMMARY
         echo "- ROS-OCP API service" >> $GITHUB_STEP_SUMMARY
         echo "- ROS-OCP Processor service" >> $GITHUB_STEP_SUMMARY
