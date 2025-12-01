@@ -15,6 +15,20 @@ on:
       - 'rosocp.go'
       - 'openapi.json'
       - 'resource_optimization_openshift.json'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/build-and-push.yml'
+      - '.dockerignore'
+      - 'Dockerfile'
+      - 'cmd/**'
+      - 'internal/**'
+      - 'migrations/**'
+      - 'go.mod'
+      - 'go.sum'
+      - 'rosocp.go'
+      - 'openapi.json'
+      - 'resource_optimization_openshift.json'
   workflow_dispatch:
     inputs:
       tag:
@@ -101,7 +115,14 @@ jobs:
           echo "- linux/amd64" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Usage" >> $GITHUB_STEP_SUMMARY
-          echo "Pull the image with:" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
-          echo "podman pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            echo "Deploy this PR image to test environment:" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+            echo "./scripts/ocp/deploy-test-ros.sh --image-tag pr-${{ github.event.pull_request.number }}" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "Pull the image with:" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+            echo "podman pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          fi
