@@ -15,6 +15,20 @@ on:
       - 'rosocp.go'
       - 'openapi.json'
       - 'resource_optimization_openshift.json'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/build-and-push.yml'
+      - '.dockerignore'
+      - 'Dockerfile'
+      - 'cmd/**'
+      - 'internal/**'
+      - 'migrations/**'
+      - 'go.mod'
+      - 'go.sum'
+      - 'rosocp.go'
+      - 'openapi.json'
+      - 'resource_optimization_openshift.json'
   workflow_dispatch:
     inputs:
       tag:
@@ -41,7 +55,23 @@ jobs:
       - name: Run tests
         run: make test
 
+      - name: Check for registry credentials
+        id: check-secrets
+        run: |
+          if [[ -z "${{ secrets.QUAY_USERNAME }}" ]] || [[ -z "${{ secrets.QUAY_PASSWORD }}" ]]; then
+            echo "has-secrets=false" >> $GITHUB_OUTPUT
+            echo "⚠️ Registry credentials not available"
+            if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+              echo "This is a PR from a fork. A maintainer must approve the workflow run to access secrets."
+              echo "See: Settings → Actions → General → Fork pull request workflows"
+            fi
+          else
+            echo "has-secrets=true" >> $GITHUB_OUTPUT
+            echo "✅ Registry credentials available"
+          fi
+
       - name: Log in to Quay.io
+        if: steps.check-secrets.outputs.has-secrets == 'true'
         uses: redhat-actions/podman-login@v1
         with:
           registry: ${{ env.REGISTRY }}
@@ -56,7 +86,8 @@ jobs:
           tags: |
             type=ref,event=branch
             type=ref,event=pr
-            type=sha,prefix={{branch}}-
+            type=sha,prefix={{branch}}-,enable={{is_default_branch}}
+            type=sha,prefix=pr-${{ github.event.pull_request.number }}-,enable=${{ github.event_name == 'pull_request' }}
             type=raw,value=latest,enable={{is_default_branch}}
             type=raw,value=${{ github.event.inputs.tag }},enable=${{ github.event.inputs.tag != '' }}
             type=semver,pattern={{version}}
@@ -74,6 +105,7 @@ jobs:
           archs: amd64
 
       - name: Push container image to registry
+        if: steps.check-secrets.outputs.has-secrets == 'true'
         uses: redhat-actions/push-to-registry@v2
         with:
           image: ${{ steps.build-image.outputs.image }}
@@ -82,10 +114,19 @@ jobs:
 
       - name: Generate build summary
         run: |
+          HAS_SECRETS="${{ steps.check-secrets.outputs.has-secrets }}"
+          
           echo "## Container Image Build Results" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "✅ **Build Status**: SUCCESS" >> $GITHUB_STEP_SUMMARY
           echo "🔧 **Build Tool**: Buildah" >> $GITHUB_STEP_SUMMARY
+          
+          if [[ "$HAS_SECRETS" == "true" ]]; then
+            echo "📦 **Push Status**: Pushed to registry" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⚠️ **Push Status**: Build only (no registry credentials)" >> $GITHUB_STEP_SUMMARY
+          fi
+          
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Built Images" >> $GITHUB_STEP_SUMMARY
           echo "**Registry**: \`${{ env.REGISTRY }}\`" >> $GITHUB_STEP_SUMMARY
@@ -100,8 +141,38 @@ jobs:
           echo "### Platforms" >> $GITHUB_STEP_SUMMARY
           echo "- linux/amd64" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Usage" >> $GITHUB_STEP_SUMMARY
-          echo "Pull the image with:" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
-          echo "podman pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          
+          if [[ "$HAS_SECRETS" == "true" ]]; then
+            echo "### Usage" >> $GITHUB_STEP_SUMMARY
+            if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+              echo "Deploy this PR image to test environment:" >> $GITHUB_STEP_SUMMARY
+              echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+              echo "./scripts/ocp/deploy-test-ros.sh --image-tag pr-${{ github.event.pull_request.number }}" >> $GITHUB_STEP_SUMMARY
+              echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "Pull the image with:" >> $GITHUB_STEP_SUMMARY
+              echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+              echo "podman pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest" >> $GITHUB_STEP_SUMMARY
+              echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            echo "### ⚠️ Registry Push Skipped" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+              echo "**This PR is from a fork and requires maintainer approval to push images.**" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "#### For Maintainers:" >> $GITHUB_STEP_SUMMARY
+              echo "1. Review the PR code changes carefully" >> $GITHUB_STEP_SUMMARY
+              echo "2. If safe, go to the **Actions** tab" >> $GITHUB_STEP_SUMMARY
+              echo "3. Click **Approve and run** to re-run with secrets" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "#### Repository Configuration:" >> $GITHUB_STEP_SUMMARY
+              echo "Ensure fork PR workflows are enabled:" >> $GITHUB_STEP_SUMMARY
+              echo "- Go to: **Settings → Actions → General**" >> $GITHUB_STEP_SUMMARY
+              echo "- Find: **Fork pull request workflows from outside collaborators**" >> $GITHUB_STEP_SUMMARY
+              echo "- Select: **Require approval for all outside collaborators**" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "Registry credentials (QUAY_USERNAME, QUAY_PASSWORD) are not configured." >> $GITHUB_STEP_SUMMARY
+              echo "Please add them in: **Settings → Secrets and variables → Actions**" >> $GITHUB_STEP_SUMMARY
+            fi
+          fi
